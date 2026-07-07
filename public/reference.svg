@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="400" height="400" viewBox="0 0 400 400">
+  <defs>
+    <style>.cls-1{fill:#f2d2c9}.cls-2{fill:#3b3b3b}.cls-3{fill:#fff}</style>
+  </defs>
+  <rect class="cls-1" width="400" height="400" rx="40"/>
+  <circle class="cls-2" cx="140" cy="170" r="18"/>
+  <circle class="cls-2" cx="260" cy="170" r="18"/>
+  <path class="cls-2" d="M140 260c20 30 100 30 120 0" stroke="#3b3b3b" fill="none" stroke-width="8" stroke-linecap="round"/>
+  <circle class="cls-3" cx="140" cy="167" r="6"/>
+  <circle class="cls-3" cx="260" cy="167" r="6"/>
+</svg>

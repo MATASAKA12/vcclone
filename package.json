@@ -1,0 +1,19 @@
+{
+  "name": "vcclone",
+  "version": "0.1.0",
+  "description": "Prototype 1:1 WebRTC video-call clone with face driving a reference image (React frontend + signaling server)",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "nodemon server.js"
+  },
+  "author": "MATASAKA12",
+  "license": "MIT",
+  "dependencies": {
+    "express": "^4.18.2",
+    "socket.io": "^4.7.2"
+  },
+  "engines": {
+    "node": ">=16"
+  }
+}
