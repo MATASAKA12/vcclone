@@ -7,6 +7,11 @@ import io from 'https://cdn.socket.io/4.7.2/socket.io.esm.min.js';
 // Warp helpers
 import { warpFace } from './warp.js';
 
+// === INFER_URL: paste your ngrok/Colab URL here, e.g. 'https://xxxxxx.ngrok.io' ===
+const INFER_URL = '<PASTE_NGROK_URL_HERE>'; // example: 'https://abcd1234.ngrok.io'
+
+// If INFER_URL is set, the client will send small frames to the inference server and render returned frames.
+
 const e = React.createElement;
 
 function App() {
@@ -21,9 +26,7 @@ function App() {
   const cameraRef = React.useRef(null);
 
   React.useEffect(() => {
-    // create UI elements after mount
-    const root = document.getElementById('app');
-    // no-op: handled by React render
+    // no-op on mount
   }, []);
 
   async function joinRoom() {
@@ -99,7 +102,6 @@ function App() {
     // capture animated canvas as a stream and add to peer connection
     const canvas = canvasRef.current;
     const cs = canvas.captureStream(25);
-    // add each track
     cs.getTracks().forEach(t => pcRef.current.addTrack(t, cs));
 
     // also add original microphone audio
@@ -109,13 +111,10 @@ function App() {
     // create offer and send to room peers
     const offer = await pcRef.current.createOffer();
     await pcRef.current.setLocalDescription(offer);
-    // broadcast offer to room: server will forward to other sockets; for simplicity we send to room via signaling events
-    // we don't have the target IDs here; the server will deliver offers to others who joined the room
     socketRef.current.emit('signal', { to: null, data: pcRef.current.localDescription });
 
     socketRef.current.on('peer-joined', async (id) => {
       console.log('peer joined', id);
-      // when a new peer joins, create an offer for them
       if (!pcRef.current) return;
       const newOffer = await pcRef.current.createOffer();
       await pcRef.current.setLocalDescription(newOffer);
@@ -127,6 +126,38 @@ function App() {
     });
   }
 
+  // Send a small JPEG frame to the inference server and draw returned image to the main canvas
+  async function sendFrameToServer(source) {
+    if (!INFER_URL || INFER_URL.includes('<PASTE')) return;
+    try {
+      const off = document.createElement('canvas');
+      const W = 256, H = 192;
+      off.width = W; off.height = H;
+      const ctx = off.getContext('2d');
+      // source can be video or canvas
+      ctx.drawImage(source, 0, 0, W, H);
+      const dataUrl = off.toDataURL('image/jpeg', 0.6);
+      const res = await fetch(INFER_URL + '/infer', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ image: dataUrl })
+      });
+      const j = await res.json();
+      if (j.image) {
+        const img = new Image();
+        img.onload = () => {
+          const mainCanvas = canvasRef.current;
+          const cctx = mainCanvas.getContext('2d');
+          cctx.clearRect(0,0,mainCanvas.width, mainCanvas.height);
+          cctx.drawImage(img, 0, 0, mainCanvas.width, mainCanvas.height);
+        };
+        img.src = j.image;
+      }
+    } catch (err) {
+      console.warn('infer error', err);
+    }
+  }
+
   function onFaceResults(results) {
     const canvas = canvasRef.current;
     const ctx = canvas.getContext('2d');
@@ -134,22 +165,29 @@ function App() {
     const h = canvas.height = 480;
 
     ctx.clearRect(0,0,w,h);
-
-    // draw background
     ctx.fillStyle = '#222';
     ctx.fillRect(0,0,w,h);
 
-    // draw the animated (warped) reference image using landmarks
-    if (results.multiFaceLandmarks && results.multiFaceLandmarks.length > 0) {
-      const landmarks = results.multiFaceLandmarks[0].map(p => ({ x: p.x * w, y: p.y * h }));
-      // warpFace will draw the reference image onto the canvas matching landmarks
-      warpFace(ctx, refImage.current, landmarks, w, h);
+    if (INFER_URL && !INFER_URL.includes('<PASTE')) {
+      // send a scaled frame of the camera to the server every time we get landmarks (the server will return the warped image)
+      // For bandwidth, send the video element rather than the full canvas
+      const src = localVideoRef.current;
+      // throttle: don't send more often than ~10-12 fps
+      if (!window._lastInfer || (performance.now() - window._lastInfer) > 80) {
+        window._lastInfer = performance.now();
+        sendFrameToServer(src);
+      }
     } else {
-      // no face: draw the static reference centered
-      const img = refImage.current;
-      const sx = (w - img.width) / 2;
-      const sy = (h - img.height) / 2;
-      ctx.drawImage(img, sx, sy);
+      // local warp fallback
+      if (results.multiFaceLandmarks && results.multiFaceLandmarks.length > 0) {
+        const landmarks = results.multiFaceLandmarks[0].map(p => ({ x: p.x * w, y: p.y * h }));
+        warpFace(ctx, refImage.current, landmarks, w, h);
+      } else {
+        const img = refImage.current;
+        const sx = (w - img.width) / 2;
+        const sy = (h - img.height) / 2;
+        ctx.drawImage(img, sx, sy);
+      }
     }
   }
 
