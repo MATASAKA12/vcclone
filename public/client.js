@@ -6,8 +6,8 @@ import io from 'https://cdn.socket.io/4.7.2/socket.io.esm.min.js';
 // Warp helpers
 import { warpFace } from './warp.js';
 
-// === INFER_URL: paste your ngrok/Colab URL here, e.g. 'https://xxxxxx.ngrok.io' ===
-const INFER_URL = '<PASTE_NGROK_URL_HERE>'; // example: 'https://abcd1234.ngrok.io'
+// === INFER_URL: Colab/ngrok URL ===
+const INFER_URL = 'https://finless-multitude-contort.ngrok-free.dev'; // set to Colab ngrok URL provided by user
 
 const e = React.createElement;
 
