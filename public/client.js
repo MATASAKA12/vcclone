@@ -1,5 +1,4 @@
 import { FaceMesh } from 'https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js';
-import { Camera } from 'https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js';
 
 // Simple signaling via Socket.io client
 import io from 'https://cdn.socket.io/4.7.2/socket.io.esm.min.js';
@@ -9,8 +8,6 @@ import { warpFace } from './warp.js';
 
 // === INFER_URL: paste your ngrok/Colab URL here, e.g. 'https://xxxxxx.ngrok.io' ===
 const INFER_URL = '<PASTE_NGROK_URL_HERE>'; // example: 'https://abcd1234.ngrok.io'
-
-// If INFER_URL is set, the client will send small frames to the inference server and render returned frames.
 
 const e = React.createElement;
 
@@ -23,38 +20,56 @@ function App() {
   const pcRef = React.useRef(null);
   const socketRef = React.useRef(null);
   const faceMeshRef = React.useRef(null);
-  const cameraRef = React.useRef(null);
+  const cameraLoopRef = React.useRef(null);
 
   React.useEffect(() => {
     // no-op on mount
   }, []);
 
   async function joinRoom() {
+    if (socketRef.current) {
+      console.log('Already joined room — ignoring duplicate join');
+      return;
+    }
+
     socketRef.current = io();
 
     socketRef.current.on('connect', () => console.log('socket connected', socketRef.current.id));
 
     socketRef.current.on('signal', async ({ from, data }) => {
       if (!pcRef.current) return;
-      if (data.type === 'offer') {
-        await pcRef.current.setRemoteDescription(new RTCSessionDescription(data));
-        const answer = await pcRef.current.createAnswer();
-        await pcRef.current.setLocalDescription(answer);
-        socketRef.current.emit('signal', { to: from, data: pcRef.current.localDescription });
-      } else if (data.type === 'answer') {
-        await pcRef.current.setRemoteDescription(new RTCSessionDescription(data));
-      } else if (data.candidate) {
-        try { await pcRef.current.addIceCandidate(data); } catch(e){console.warn('ICE add failed', e)}
+      try {
+        if (data.type === 'offer') {
+          await pcRef.current.setRemoteDescription(new RTCSessionDescription(data));
+          const answer = await pcRef.current.createAnswer();
+          await pcRef.current.setLocalDescription(answer);
+          socketRef.current.emit('signal', { to: from, data: pcRef.current.localDescription });
+        } else if (data.type === 'answer') {
+          await pcRef.current.setRemoteDescription(new RTCSessionDescription(data));
+        } else if (data.candidate) {
+          try { await pcRef.current.addIceCandidate(data); } catch(e){console.warn('ICE add failed', e)}
+        }
+      } catch (err) {
+        console.error('Error handling signal', err);
       }
     });
 
     socketRef.current.emit('join', room);
 
     // get camera
-    const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+    let stream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+    } catch (err) {
+      console.error('getUserMedia failed', err);
+      alert('Camera/microphone access is required. Check permissions.');
+      return;
+    }
+
     localVideoRef.current.srcObject = stream;
     localVideoRef.current.muted = true;
     await localVideoRef.current.play().catch(()=>{});
+    console.log('got user media stream', stream);
 
     // prepare FaceMesh
     faceMeshRef.current = new FaceMesh({ locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}` });
@@ -67,20 +82,31 @@ function App() {
 
     faceMeshRef.current.onResults(onFaceResults);
 
-    cameraRef.current = new Camera(localVideoRef.current, {
-      onFrame: async () => {
-        await faceMeshRef.current.send({ image: localVideoRef.current });
-      },
-      width: 640,
-      height: 480
-    });
+    // Start a simple requestAnimationFrame loop to feed frames to FaceMesh
+    function startFaceMeshLoop() {
+      let running = true;
+      async function frameLoop() {
+        try {
+          if (localVideoRef.current && faceMeshRef.current) {
+            await faceMeshRef.current.send({ image: localVideoRef.current });
+          }
+        } catch (err) {
+          // ignore transient frame errors
+        }
+        if (running) cameraLoopRef.current = requestAnimationFrame(frameLoop);
+      }
+      cameraLoopRef.current = requestAnimationFrame(frameLoop);
+      return () => { running = false; if (cameraLoopRef.current) cancelAnimationFrame(cameraLoopRef.current); };
+    }
 
-    cameraRef.current.start();
+    const stopLoop = startFaceMeshLoop();
+    console.log('faceMesh loop started', faceMeshRef.current);
 
     // prepare reference image (SVG included in repo)
     refImage.current = new Image();
     refImage.current.src = '/reference.svg';
     await new Promise((res) => { refImage.current.onload = res; });
+    console.log('reference image loaded', refImage.current && refImage.current.src);
 
     // setup PeerConnection
     pcRef.current = new RTCPeerConnection({
@@ -109,16 +135,26 @@ function App() {
     audioTracks.forEach(t => pcRef.current.addTrack(t, stream));
 
     // create offer and send to room peers
-    const offer = await pcRef.current.createOffer();
-    await pcRef.current.setLocalDescription(offer);
-    socketRef.current.emit('signal', { to: null, data: pcRef.current.localDescription });
+    try {
+      const offer = await pcRef.current.createOffer();
+      await pcRef.current.setLocalDescription(offer);
+      socketRef.current.emit('signal', { to: null, data: pcRef.current.localDescription });
+    } catch (err) {
+      console.error('Failed to create/send offer', err);
+    }
+
+    // disable join button to prevent duplicate joins
+    const joinBtn = document.querySelector('button');
+    if (joinBtn) joinBtn.disabled = true;
 
     socketRef.current.on('peer-joined', async (id) => {
       console.log('peer joined', id);
       if (!pcRef.current) return;
-      const newOffer = await pcRef.current.createOffer();
-      await pcRef.current.setLocalDescription(newOffer);
-      socketRef.current.emit('signal', { to: id, data: pcRef.current.localDescription });
+      try {
+        const newOffer = await pcRef.current.createOffer();
+        await pcRef.current.setLocalDescription(newOffer);
+        socketRef.current.emit('signal', { to: id, data: pcRef.current.localDescription });
+      } catch (err) { console.error('offer to new peer failed', err); }
     });
 
     socketRef.current.on('peer-left', (id) => {
