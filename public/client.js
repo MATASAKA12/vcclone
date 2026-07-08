@@ -27,6 +27,7 @@ function App() {
   }, []);
 
   async function joinRoom() {
+    // guard duplicate joins to avoid attaching listeners multiple times
     if (socketRef.current) {
       console.log('Already joined room — ignoring duplicate join');
       return;
@@ -82,7 +83,7 @@ function App() {
 
     faceMeshRef.current.onResults(onFaceResults);
 
-    // Start a simple requestAnimationFrame loop to feed frames to FaceMesh
+    // Start a simple requestAnimationFrame loop to feed frames to MediaPipe FaceMesh
     function startFaceMeshLoop() {
       let running = true;
       async function frameLoop() {
