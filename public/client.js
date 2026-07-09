@@ -24,6 +24,21 @@ function App() {
     // no-op on mount
   }, []);
 
+  // Draw a visible error state on the canvas so failures are never silent/black
+  function showInferError(message) {
+    const mainCanvas = canvasRef.current;
+    if (!mainCanvas) return;
+    const cctx = mainCanvas.getContext('2d');
+    cctx.fillStyle = '#500';
+    cctx.fillRect(0, 0, mainCanvas.width, mainCanvas.height);
+    cctx.fillStyle = '#fff';
+    cctx.font = '16px sans-serif';
+    cctx.fillText('Inference server unreachable:', 20, 40);
+    cctx.font = '13px sans-serif';
+    cctx.fillText(message, 20, 64);
+    cctx.fillText('Check Colab / ngrok tunnel and INFER_URL', 20, 88);
+  }
+
   // Throttled send to inference server
   async function sendFrameToServer(source) {
     if (!INFER_URL || INFER_URL.includes('<PASTE')) return;
@@ -39,19 +54,43 @@ function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ image: dataUrl })
       });
+
+      // Catch dead tunnels / non-JSON error pages before they blow up JSON.parse
+      if (!res.ok) {
+        throw new Error(`Server responded ${res.status} ${res.statusText}`);
+      }
+
+      const contentType = res.headers.get('content-type') || '';
+      if (!contentType.includes('application/json')) {
+        throw new Error('Server did not return JSON (tunnel likely down or misconfigured)');
+      }
+
       const j = await res.json();
+
+      if (j.error) {
+        throw new Error(j.error);
+      }
+
       if (j.image) {
         const img = new Image();
         img.onload = () => {
           const mainCanvas = canvasRef.current;
+          if (!mainCanvas) return;
           const cctx = mainCanvas.getContext('2d');
-          cctx.clearRect(0,0,mainCanvas.width, mainCanvas.height);
+          cctx.clearRect(0, 0, mainCanvas.width, mainCanvas.height);
           cctx.drawImage(img, 0, 0, mainCanvas.width, mainCanvas.height);
         };
+        img.onerror = () => {
+          console.warn('Returned image failed to decode/load');
+          showInferError('Received response but image failed to load');
+        };
         img.src = j.image;
+      } else {
+        showInferError('Response had no image field');
       }
     } catch (err) {
       console.warn('infer error', err);
+      showInferError(err.message || String(err));
     }
   }
 
@@ -77,7 +116,7 @@ function App() {
         } else if (data.type === 'answer') {
           await pcRef.current.setRemoteDescription(new RTCSessionDescription(data));
         } else if (data.candidate) {
-          try { await pcRef.current.addIceCandidate(data); } catch(e){console.warn('ICE add failed', e)}
+          try { await pcRef.current.addIceCandidate(data); } catch (e) { console.warn('ICE add failed', e) }
         }
       } catch (err) {
         console.error('Error handling signal', err);
@@ -98,7 +137,7 @@ function App() {
 
     localVideoRef.current.srcObject = stream;
     localVideoRef.current.muted = true;
-    await localVideoRef.current.play().catch(()=>{});
+    await localVideoRef.current.play().catch(() => {});
     console.log('got user media stream', stream);
 
     // dynamically load MediaPipe FaceMesh (robust to different module layouts)
@@ -153,7 +192,7 @@ function App() {
 
     // setup PeerConnection
     pcRef.current = new RTCPeerConnection({
-      iceServers: [ { urls: 'stun:stun.l.google.com:19302' } ]
+      iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
     });
 
     pcRef.current.onicecandidate = (e) => {
@@ -211,9 +250,9 @@ function App() {
     const w = canvas.width = 640;
     const h = canvas.height = 480;
 
-    ctx.clearRect(0,0,w,h);
+    ctx.clearRect(0, 0, w, h);
     ctx.fillStyle = '#222';
-    ctx.fillRect(0,0,w,h);
+    ctx.fillRect(0, 0, w, h);
 
     // If the client is using the Colab infer server, throttle sends and draw server result when returned.
     if (INFER_URL && !INFER_URL.includes('<PASTE')) {
